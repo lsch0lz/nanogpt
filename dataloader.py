@@ -1,14 +1,14 @@
 from typing import AnyStr, List
 
 import torch
-from torch import Tensor
 
 
 class DataLoader:
-    def __init__(self, file_path: str, block_size: int, batch_size: int, train_split: int = 0.9):
+    def __init__(self, file_path: str, block_size: int, batch_size: int, num_eval_iter: int, train_split: int = 0.9):
         self.file_path = file_path
         self.block_size = block_size
         self.batch_size = batch_size
+        self.num_eval_iter = num_eval_iter
         self.train_split = train_split
 
     def load_data_from_file(self) -> AnyStr:
@@ -30,11 +30,11 @@ class DataLoader:
 
     def split_dataset(self):
         encoder, _, _ = self.create_token_encoder_and_decoder()
-        data: Tensor = torch.tensor(encoder(self.load_data_from_file()))
+        data: torch.Tensor = torch.tensor(encoder(self.load_data_from_file()))
         number_of_training_samples: int = int(self.train_split * len(data))
 
-        train_data: Tensor = data[:number_of_training_samples]
-        val_data: Tensor = data[number_of_training_samples:]
+        train_data: torch.Tensor = data[:number_of_training_samples]
+        val_data: torch.Tensor = data[number_of_training_samples:]
 
         return train_data, val_data
 
@@ -45,8 +45,25 @@ class DataLoader:
         else:
             data = val_data
 
-        idx: Tensor = torch.randint(len(data) - self.block_size, (self.batch_size,))
-        x: Tensor = torch.stack([data[i:i + self.block_size] for i in idx])
-        y: Tensor = torch.stack([data[i + 1:i + self.block_size + 1] for i in idx])
+        idx: torch.Tensor = torch.randint(len(data) - self.block_size, (self.batch_size,))
+        x: torch.Tensor = torch.stack([data[i:i + self.block_size] for i in idx])
+        y: torch.Tensor = torch.stack([data[i + 1:i + self.block_size + 1] for i in idx])
 
         return x, y
+
+    def estimate_loss_model(self, model):
+        output_dict: dict = {}
+        model.eval()
+
+        for split in ["train", "val"]:
+            losses: torch.Tensor = torch.zeros(self.num_eval_iter)
+            for k in range(self.num_eval_iter):
+                x, y = self.create_batches(split)
+
+                logits, loss = model(x, y)
+                losses[k] = loss.item()
+
+            output_dict[split] = losses.mean()
+
+        model.train()
+        return output_dict

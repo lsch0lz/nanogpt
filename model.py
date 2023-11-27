@@ -5,12 +5,13 @@ from torch.nn import functional as F
 
 
 class SelfAttentionHead(nn.Module):
-    def __init__(self, head_size: int, block_size: int, num_embeddings: int):
+    def __init__(self, head_size: int, block_size: int, num_embeddings: int, dropout: float):
         super().__init__()
         self.key = nn.Linear(num_embeddings, head_size, bias=False)
         self.query = nn.Linear(num_embeddings, head_size, bias=False)
         self.value = nn.Linear(num_embeddings, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         b, t, c = x.shape
@@ -31,17 +32,18 @@ class SelfAttentionHead(nn.Module):
 
 
 class MultiAttentionHead(nn.Module):
-    def __init__(self, head_size: int, num_heads: int, num_embeddings: int, dropout: float):
+    def __init__(self, head_size: int, num_heads: int, num_embeddings: int, dropout: float, block_size: int):
         super().__init__()
-        self.heads = nn.ModuleList([SelfAttentionHead(head_size) for _ in range(num_heads)])
+        self.heads = nn.ModuleList(
+            [SelfAttentionHead(head_size=head_size, num_embeddings=num_embeddings, block_size=block_size, dropout=dropout) for _ in range(num_heads)])
         self.projection = nn.Linear(head_size * num_heads, num_embeddings)
         self.dropout = nn.Dropout(dropout)
 
-        def forward(self, x):
-            output: torch.Tensor = torch.cat([head(x) for head in self.heads], dim=1)
-            output: torch.Tensor = self.dropout(self.projection(output))
+    def forward(self, x):
+        output: torch.Tensor = torch.cat([head(x) for head in self.heads], dim=-1)
+        output: torch.Tensor = self.dropout(self.projection(output))
 
-            return output
+        return output
 
 
 class FeedForwardNetwork(nn.Module):
@@ -59,11 +61,12 @@ class FeedForwardNetwork(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, num_embeddings: int, num_head: int, dropout: float):
+    def __init__(self, num_embeddings: int, num_head: int, dropout: float, block_size: int):
         super().__init__()
 
         head_size: int = num_embeddings // num_head
-        self.self_attention = MultiAttentionHead(head_size=head_size, num_heads=num_head, num_embeddings=num_embeddings, dropout=dropout)
+        self.self_attention = MultiAttentionHead(head_size=head_size, num_heads=num_head, num_embeddings=num_embeddings, dropout=dropout,
+                                                 block_size=block_size)
         self.feed_forward = FeedForwardNetwork(num_embeddings=num_embeddings, dropout=dropout)
         self.layer_norm_1 = nn.LayerNorm(num_embeddings)
         self.layer_norm_2 = nn.LayerNorm(num_embeddings)
@@ -74,6 +77,7 @@ class TransformerBlock(nn.Module):
 
         return x
 
+
 class NanoGPTModel(nn.Module):
     def __init__(self, vocab_size: int, num_embeddings: int, block_size: int, num_head: int, num_layer: int, dropout: float, device):
         super().__init__()
@@ -81,8 +85,8 @@ class NanoGPTModel(nn.Module):
         self.device = device
         self.block_size = block_size
         self.token_embedding_table = nn.Embedding(vocab_size, num_embeddings)
-        self.position_embedding_table = nn.Embedding(block_size, vocab_size)
-        self.blocks = nn.Sequential(*[TransformerBlock(num_embeddings, num_head, dropout) for _ in range(num_layer)])
+        self.position_embedding_table = nn.Embedding(block_size, num_embeddings)
+        self.blocks = nn.Sequential(*[TransformerBlock(num_embeddings, num_head, dropout, block_size=block_size) for _ in range(num_layer)])
         self.layer_norm_final = nn.LayerNorm(num_embeddings)
         self.language_model_head = nn.Linear(num_embeddings, vocab_size)
 

@@ -102,7 +102,7 @@ class NanoGPTModel(nn.Module):
         b, t = idx.shape
 
         # idx and targets are both (B,T) tensor of integers
-        token_embeddings = self.token_embedding_table(idx)  # (B,T,C)
+        token_embeddings = self.token_embedding_table(idx.to(self.device))  # (B,T,C)
         position_embeddings = self.position_embedding_table(torch.arange(t, device=self.device))  # (T,C)
         x = token_embeddings + position_embeddings  # (B,T,C)
         x = self.blocks(x)  # (B,T,C)
@@ -113,8 +113,8 @@ class NanoGPTModel(nn.Module):
             loss = None
         else:
             b, t, c = logits.shape
-            logits = logits.view(b * t, c)
-            targets = targets.view(b * t)
+            logits = logits.view(b * t, c).to(self.device)
+            targets = targets.view(b * t).to(self.device)
             loss = F.cross_entropy(logits, targets)
 
         return logits, loss

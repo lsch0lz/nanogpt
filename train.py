@@ -1,21 +1,27 @@
 import torch
+import argparse
 
 from dataloader import DataLoader
 from model import NanoGPTModel
 
-# hyperparameters
-batch_size = 64 # how many independent sequences will we process in parallel?
-block_size = 256 # what is the maximum context length for predictions?
-max_iters = 5000
-eval_interval = 500
-learning_rate = 3e-4
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_iters = 200
-n_embd = 384
-n_head = 6
-n_layer = 6
-dropout = 0.2
-# ------------
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--block_size", type=int, default=256)
+    parser.add_argument("--max_iters", type=int, default=5000)
+    parser.add_argument("--eval_interval", type=int, default=500)
+    parser.add_argument("--learning_rate", type=float, default=3e-4)
+    parser.add_argument("--device", type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
+    parser.add_argument("--eval_iters", type=int, default=200)
+    parser.add_argument("--n_embd", type=int, default=384)
+    parser.add_argument("--n_head", type=int, default=6)
+    parser.add_argument("--n_layer", type=int, default=6)
+    parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument("--file_path", type=str, default="./input.txt")
+    parser.add_argument("--train_split", type=float, default=0.9)
+
+    return parser.parse_args()
 
 
 def estimate_loss_model(_model, num_eval_iter: int, dataloader: DataLoader):
@@ -36,13 +42,33 @@ def estimate_loss_model(_model, num_eval_iter: int, dataloader: DataLoader):
     return output_dict
 
 
+def train_loop(max_iters: int, eval_interval: int, device):
+    for iteration in range(max_iters):
+
+        if iteration % eval_interval == 0 or iteration == max_iters - 1:
+            losses = estimate_loss_model(model, num_eval_iter=500, dataloader=dataloader)
+            print(f"step {iteration}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+
+        xb, yb, _ = dataloader.create_batches('train')
+
+        logits, loss = model(xb, yb)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+
+    context = torch.zeros((1, 1), dtype=torch.long, device=device)
+    print(decoder(model.generate(context, max_new_tokens=500)[0].tolist()))
+
+
 if __name__ == "__main__":
+    args = parse_args()
+
     dataloader: DataLoader = DataLoader(
-        file_path="./input.txt",
-        block_size=256,
-        batch_size=64,
-        num_eval_iter=500,
-        train_split=0.9
+        file_path=args.file_path,
+        block_size=args.block_size,
+        batch_size=args.batch_size,
+        num_eval_iter=args.eval_iters,
+        train_split=args.train_split
     )
 
     _, decoder, _ = dataloader.create_token_encoder_and_decoder()
@@ -50,38 +76,18 @@ if __name__ == "__main__":
 
     model = NanoGPTModel(
         vocab_size=vocab_size,
-        num_embeddings=384,
-        block_size=256,
-        num_head=6,
-        num_layer=6,
-        dropout=0.2,
-        device='cuda' if torch.cuda.is_available() else 'cpu'
+        num_embeddings=args.n_embd,
+        block_size=args.block_size,
+        num_head=args.n_head,
+        num_layer=args.n_layer,
+        dropout=args.dropout,
+        device=args.device
     )
 
-    model = model.to(device)
-    # print the number of parameters in the model
+    model = model.to(args.device)
+
     print(sum(p.numel() for p in model.parameters()) / 1e6, 'M parameters')
 
-    # create a PyTorch optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
-    for iteration in range(max_iters):
-
-        # every once in a while evaluate the loss on train and val sets
-        if iteration % eval_interval == 0 or iteration == max_iters - 1:
-            losses = estimate_loss_model(model, num_eval_iter=500, dataloader=dataloader)
-            print(f"step {iteration}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
-
-        # sample a batch of data
-        xb, yb, _ = dataloader.create_batches('train')
-
-        # evaluate the loss
-        logits, loss = model(xb, yb)
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
-
-    # generate from the model
-    context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(decoder(model.generate(context, max_new_tokens=500)[0].tolist()))
-    #open('more.txt', 'w').write(decode(m.generate(context, max_new_tokens=10000)[0].tolist()))
+    train_loop(args.max_iters, args.eval_interval, args.device)
